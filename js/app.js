@@ -7,7 +7,6 @@ document.getElementById("cargarReservasBtn")
 // Abrir el diálogo de nueva reserva
 const addReservaDialog = document.getElementById("nuevaReservaDialog");
 document.getElementById("openDialogAddReservaBtn").addEventListener("click", () => {
-    cargarMesasDisponibles(); // Llamar a la función para cargar mesas disponibles
     addReservaDialog.showModal();
 });
 
@@ -15,6 +14,11 @@ document.getElementById("openDialogAddReservaBtn").addEventListener("click", () 
 document.getElementById('cancelReservaBtn').addEventListener("click", () => {
     addReservaDialog.close();
 });
+
+// Cargar mesas disponibles al seleccionar fecha y hora
+document.getElementById("fechaReserva").addEventListener("change", cargarMesasDisponibles);
+document.getElementById("horaReserva").addEventListener("change", cargarMesasDisponibles);
+
 
 // Cerrar sesión
 document.getElementById("logoutBtn").addEventListener("click", cerrarSesion);
@@ -89,16 +93,34 @@ async function mostrarUsuario() {
 // Obtener el usuario desde el token
 function obtenerUsuarioDesdeToken() {
     const token = localStorage.getItem("token");
+    console.log("Token en localStorage:", token);
+
     if (!token) return null;
 
-    const payload = JSON.parse(atob(token.split('.')[1])); // Decodificar el JWT
-    return payload ? payload.username : null; // Obtener el nombre de usuario (si existe en el token)
+    try {
+        const payloadBase64 = token.split('.')[1];
+        console.log("Payload codificado:", payloadBase64);
+
+        const payload = JSON.parse(atob(payloadBase64));
+        console.log("Payload decodificado:", payload);
+
+        return payload ? payload.username : null;
+    } catch (error) {
+        console.error("Error al decodificar el token:", error);
+        return null;
+    }
 }
+
 
 // Cargar mesas disponibles
 async function cargarMesasDisponibles() {
+    const fecha = document.getElementById("fechaReserva").value;
+    const hora = document.getElementById("horaReserva").value;
+
+    if (!fecha || !hora) return;
+
     try {
-        const response = await fetch("http://localhost:8080/mesas", {
+        const response = await fetch(`http://localhost:8080/mesas-disponibles?fecha=${fecha}&hora=${hora}`, {
             method: "GET",
             headers: {
                 "Authorization": `Bearer ${localStorage.getItem("token")}`,
@@ -113,44 +135,86 @@ async function cargarMesasDisponibles() {
         const mesas = await response.json();
         const mesaSelect = document.getElementById("mesaSelect");
 
-        mesas.forEach(mesa => {
+        // Limpiar opciones anteriores
+        mesaSelect.innerHTML = "";
+
+        if (mesas.length === 0) {
             const option = document.createElement("option");
-            option.value = mesa.id;
-            option.textContent = `Mesa ${mesa.id}`;
+            option.textContent = "No hay mesas disponibles para esta fecha y hora.";
             mesaSelect.appendChild(option);
-        });
+        } else {
+            // Añadir opciones de mesas disponibles
+            mesas.forEach(mesa => {
+                const option = document.createElement("option");
+                option.value = mesa.id;
+                option.textContent = `Mesa ${mesa.id}`;
+                mesaSelect.appendChild(option);
+            });
+        }
+
     } catch (error) {
         console.error("Error al cargar las mesas:", error);
     }
 }
 
+async function obtenerClienteId() {
+    const token = localStorage.getItem("token");
+    console.log("Token enviado en la solicitud:", token);
+
+    if (!token) return null;
+
+    try {
+        const response = await fetch("http://localhost:8080/clientes/mi-cliente", {
+            method: "GET",
+            headers: {
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json"
+            }
+        });
+
+        console.log("Estado de la respuesta:", response.status); //
+        const data = await response.json();
+        console.log("Respuesta del servidor:", data); //
+
+        if (!response.ok) throw new Error(data);
+
+        return data;
+    } catch (error) {
+        console.error("Error al obtener el cliente:", error);
+        return null;
+    }
+}
+
+
+
 // Función para añadir una nueva reserva
 async function nuevaReserva() {
-    const nombreCliente = document.getElementById("nombreCliente").value;
-    const mesaId = parseInt(document.getElementById("mesaSelect").value, 10);
-    if (!mesaId) {
-        alert("Por favor, selecciona una mesa válida.");
-        return;
-    }
+    const mesaId = document.getElementById("mesaSelect").value;
     const fecha = document.getElementById("fechaReserva").value;
     const hora = document.getElementById("horaReserva").value;
     const numPersonas = document.getElementById("numPersonas").value;
 
-    if (!nombreCliente || !mesaId || !fecha || !hora || !numPersonas) {
+    let clienteNombre = localStorage.getItem("clienteNombre"); // Obtenemos el nombre del cliente desde localStorage
+
+    if (!clienteNombre || clienteNombre === "undefined") { // Validamos si es nulo o "undefined"
+        console.error("❌ Error: clienteNombre no está definido en localStorage");
+        alert("Error: No se pudo obtener el nombre del cliente. Intenta iniciar sesión nuevamente.");
+        return;
+    }
+
+    if (!mesaId || !fecha || !hora || !numPersonas) {
         alert("Por favor, complete todos los campos.");
         return;
     }
 
     const reserva = {
-        cliente: { nombre: nombreCliente },
-        mesa: { id: parseInt(mesaId) }, // Convertir a número
+        mesa: { id: mesaId },
         fecha: fecha,
         hora: hora,
-        numeroPersonas: parseInt(numPersonas), // Convertir a número
-        usuario: { username: obtenerUsuarioDesdeToken() }
+        numeroPersonas: numPersonas,
+        usuario: { username: obtenerUsuarioDesdeToken() },
+        cliente: { nombre: clienteNombre } // Usamos el nombre del cliente
     };
-
-    console.log("Datos a enviar:", reserva); // Verifica los datos antes de enviarlos
 
     try {
         const response = await fetch("http://localhost:8080/reservas", {
@@ -167,25 +231,16 @@ async function nuevaReserva() {
         }
 
         const nuevaReserva = await response.json();
-        console.log("Reserva creada:", nuevaReserva);
-
-        // Agregar la nueva reserva a la tabla
+        console.log("🟢 Reserva creada:", nuevaReserva);
         agregarReservaATabla(nuevaReserva);
-
-        // Cerrar el diálogo
         addReservaDialog.close();
-
-        // Limpiar los campos del formulario
-        document.getElementById("nombreCliente").value = "";
-        document.getElementById("mesaSelect").value = "";
-        document.getElementById("fechaReserva").value = "";
-        document.getElementById("horaReserva").value = "";
-        document.getElementById("numPersonas").value = "";
-
     } catch (error) {
-        console.error("Error al crear la reserva:", error);
+        console.error("❌ Error al crear la reserva:", error);
     }
 }
+
+
+
 
 
 async function borrarReserva(id, boton) {
@@ -219,13 +274,12 @@ async function borrarReserva(id, boton) {
 function agregarReservaATabla(reserva) {
     const fila = document.createElement("tr");
     fila.innerHTML = `
-        <td>${reserva.cliente.nombre}</td>
         <td>Mesa ${reserva.mesa.id}</td>
         <td>${reserva.fecha}</td>
         <td>${reserva.hora}</td>
         <td>${reserva.numeroPersonas}</td>
-        <td><button class="btn btn-warning btn-sm" onclick="editarReserva(${reserva.id})">Editar</button>
-        <button class="btn btn-danger btn-sm" onclick="borrarReserva(${reserva.id}, this)">Borrar</button></td>`;
+        <td><button class="btn btn-danger btn-sm" onclick="borrarReserva(${reserva.id}, this)">Borrar</button></td>
+    `;
     document.getElementById("tableBody").appendChild(fila);
 }
 
